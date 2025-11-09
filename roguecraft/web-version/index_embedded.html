@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RogueCraft — Juego complejo (single file)</title>
+  <style>
+    /* ---------------------------------------------
+       RogueCraft - estilos
+       Juego top-down estilo roguelike con UI, mapa
+       generacion procedural, enemigos, items, inventario,
+       guardado local, minimapa y efectos.
+       --------------------------------------------- */
+    :root{
+      --bg:#0b1020;
+      --panel:#0f1724;
+      --accent:#67e8f9;
+      --muted:#8892a6;
+      --danger:#ff6b6b;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:#e6eef6;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif}
+    .container{display:grid;grid-template-columns:1fr 360px;gap:12px;height:100vh;padding:16px;box-sizing:border-box}
+    .game-panel{background:linear-gradient(180deg,#071026 0%, #0d1626 100%);border-radius:12px;padding:10px;display:flex;flex-direction:column;box-shadow:0 6px 24px rgba(2,6,23,0.6)}
+    canvas{background:#061026;border-radius:8px;display:block;margin:auto}
+    .sidebar{background:var(--panel);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 6px 18px rgba(0,0,0,0.5)}
+    h1{font-size:18px;margin:0 0 6px 0}
+    .stats{display:flex;flex-direction:column;gap:6px}
+    .stat{display:flex;justify-content:space-between;padding:6px;border-radius:8px;background:linear-gradient(90deg,rgba(255,255,255,0.02),transparent)}
+    .buttons{display:flex;gap:8px}
+    button{padding:8px 10px;border-radius:8px;border:0;background:var(--accent);color:#022;cursor:pointer}
+    .muted{color:var(--muted);font-size:13px}
+    .inventory{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+    .slot{height:56px;background:rgba(255,255,255,0.02);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px}
+    .log{height:120px;overflow:auto;background:#06131f;border-radius:8px;padding:8px;font-size:13px}
+    .minimap{width:160px;height:160px;background:#03131a;border-radius:6px;padding:6px;box-sizing:border-box}
+    .controls{display:flex;flex-direction:column;gap:6px}
+    .footer{display:flex;justify-content:space-between;align-items:center;padding-top:8px}
+    .big{font-weight:700}
+    /* responsive */
+    @media(max-width:900px){.container{grid-template-columns:1fr;grid-auto-rows:auto}.sidebar{order:2}.game-panel{order:1}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="game-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div>
+          <h1>RogueCraft — Demo complejo</h1>
+          <div class="muted">Controles: WASD / flechas para mover — Espacio para atacar — I inventario — P pausar</div>
+        </div>
+        <div class="buttons">
+          <button id="btnNew">Nuevo juego</button>
+          <button id="btnSave">Guardar</button>
+          <button id="btnLoad">Cargar</button>
+        </div>
+      </div>
+
+      <canvas id="gameCanvas" width="900" height="600"></canvas>
+
+      <div class="footer">
+        <div class="muted">Nivel: <span id="levelLabel">1</span> • Puntuación: <span id="scoreLabel">0</span></div>
+        <div class="muted">FPS: <span id="fps">0</span></div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="stats">
+        <div class="stat"><div>Vida</div><div id="hpLabel">100 / 100</div></div>
+        <div class="stat"><div>Ataque</div><div id="atkLabel">10</div></div>
+        <div class="stat"><div>Velocidad</div><div id="spdLabel">2.5</div></div>
+        <div class="stat"><div>Oro</div><div id="goldLabel">0</div></div>
+      </div>
+
+      <div>
+        <h2 style="margin:8px 0 6px 0;font-size:15px">Inventario</h2>
+        <div class="inventory" id="inventory">
+          <!-- slots -->
+        </div>
+      </div>
+
+      <div>
+        <h2 style="margin:8px 0 6px 0;font-size:15px">Registro</h2>
+        <div class="log" id="log"></div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+        <div class="minimap" id="minimap"></div>
+        <div style="flex:1">
+          <div class="controls">
+            <div class="muted">Dificultad</div>
+            <select id="difficulty"><option value="1">Fácil</option><option value="2">Normal</option><option value="3">Difícil</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <div class="muted">Version: 1.0.0</div>
+        <div style="display:flex;gap:8px">
+          <button id="btnExport">Exportar JSON</button>
+          <button id="btnImport">Importar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /* ---------------------------------------------
+     RogueCraft - motor del juego
+     Autor: ChatGPT (demo)
+     Nota: este archivo es autocontenido — copia y pega
+     en index.html y ábrelo en tu navegador.
+     --------------------------------------------- */
+
+  // UTILIDADES
+  const rand = (a,b)=> Math.floor(Math.random()*(b-a+1))+a;
+  const clamp = (v,a,b)=> Math.max(a,Math.min(b,v));
+  const deepCopy = obj => JSON.parse(JSON.stringify(obj));
+
+  // Canvas y contexto
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const minimapEl = document.getElementById('minimap');
+  const mmCtx = minimapEl.getContext('2d');
+
+  // UI elements
+  const hpLabel = document.getElementById('hpLabel');
+  const atkLabel = document.getElementById('atkLabel');
+  const spdLabel = document.getElementById('spdLabel');
+  const goldLabel = document.getElementById('goldLabel');
+  const logEl = document.getElementById('log');
+  const inventoryEl = document.getElementById('inventory');
+  const levelLabel = document.getElementById('levelLabel');
+  const scoreLabel = document.getElementById('scoreLabel');
+  const fpsLabel = document.getElementById('fps');
+
+  // game state
+  let state = {
+    running:true,
+    paused:false,
+    level:1,
+    score:0,
+    seed: Date.now(),
+    difficulty:1,
+    player:null,
+    entities:[],
+    items:[],
+    map:null,
+    width:60, // tiles
+    height:40, // tiles
+    tileSize:16,
+    time:0
+  };
+
+  // Input
+  const keys = {};
+  window.addEventListener('keydown',e=>{ keys[e.key.toLowerCase()]=true; if(e.key==='i' || e.key==='I'){ toggleInventory() } if(e.key==='p' || e.key==='P'){ state.paused=!state.paused } });
+  window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+
+  // Eventos UI
+  document.getElementById('btnNew').addEventListener('click',()=>startNew());
+  document.getElementById('btnSave').addEventListener('click',()=>saveGame());
+  document.getElementById('btnLoad').addEventListener('click',()=>loadGame());
+  document.getElementById('btnExport').addEventListener('click',()=>exportJSON());
+  document.getElementById('btnImport').addEventListener('click',()=>importJSON());
+  document.getElementById('difficulty').addEventListener('change',e=>state.difficulty=parseInt(e.target.value));
+
+  // Inventario UI: crear 12 slots
+  const SLOTS = 12;
+  for(let i=0;i<SLOTS;i++){
+    const s = document.createElement('div'); s.className='slot'; s.dataset.index=i; s.textContent='Vacío'; s.addEventListener('click',()=>useItem(i)); inventoryEl.appendChild(s);
+  }
+
+  // Log
+  function log(text){ const p=document.createElement('div'); p.textContent = `[${new Date().toLocaleTimeString()}] ${text}`; logEl.prepend(p); }
+
+  // Map generator: simple drunkard walk + rooms
+  function generateMap(w,h,seed){
+    const rnd = mulberry32(seed);
+    const map = Array.from({length:h},()=>Array.from({length:w},()=>1)); // 1 muro, 0 suelo
+
+    // carve rooms
+    const rooms = [];
+    for(let r=0;r<rand(6,12);r++){
+      const rw = Math.floor(rnd()*(8-3))+3;
+      const rh = Math.floor(rnd()*(8-3))+3;
+      const rx = Math.floor(rnd()*(w-rw-1))+1;
+      const ry = Math.floor(rnd()*(h-rh-1))+1;
+      rooms.push({x:rx,y:ry,w:rw,h:rh});
+      for(let yy=ry;yy<ry+rh;yy++) for(let xx=rx;xx<rx+rw;xx++) map[yy][xx]=0;
+    }
+
+    // connect rooms with corridors
+    for(let i=1;i<rooms.length;i++){
+      const a=rooms[i-1]; const b=rooms[i];
+      const ax = Math.floor(a.x+a.w/2); const ay=Math.floor(a.y+a.h/2);
+      const bx = Math.floor(b.x+b.w/2); const by=Math.floor(b.y+b.h/2);
+      if(rnd()<0.5){ carveHorizontal(map,ax,bx,ay); carveVertical(map,ay,by,bx);} else { carveVertical(map,ay,by,ax); carveHorizontal(map,ax,bx,by);}    }
+
+    // random walk to make caves
+    let cx = Math.floor(w/2), cy=Math.floor(h/2);
+    for(let i=0;i<10000;i++){
+      map[cy][cx]=0;
+      const dir = Math.floor(rnd()*4);
+      if(dir===0) cx = clamp(cx+1,1,w-2);
+      if(dir===1) cx = clamp(cx-1,1,w-2);
+      if(dir===2) cy = clamp(cy+1,1,h-2);
+      if(dir===3) cy = clamp(cy-1,1,h-2);
+    }
+
+    return {tiles:map,rooms};
+  }
+  function carveHorizontal(map,x1,x2,y){const a=Math.min(x1,x2),b=Math.max(x1,x2); for(let x=a;x<=b;x++) map[y][x]=0}
+  function carveVertical(map,y1,y2,x){const a=Math.min(y1,y2),b=Math.max(y1,y2); for(let y=a;y<=b;y++) map[y][x]=0}
+
+  // deterministic RNG (seeded)
+  function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;}} 
+
+  // ENTIDADES: jugador, enemigo, proyectil
+  class Entity{
+    constructor(x,y,type){this.x=x;this.y=y;this.type=type;this.hp=10;this.maxHp=10;this.speed=1;this.radius=6;this.color='#88e';this.data={};}
+    update(dt){ }
+    draw(ctx,ox,oy,tile){ const px = Math.floor(this.x*tile+ox); const py=Math.floor(this.y*tile+oy); ctx.beginPath(); ctx.arc(px,py,this.radius,0,Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); ctx.closePath(); if(this.type==='player'){ ctx.strokeStyle='#fff3'; ctx.beginPath(); ctx.arc(px,py,this.radius+2,0,Math.PI*2); ctx.stroke(); ctx.closePath(); }}
+  }
+
+  // player extended
+  class Player extends Entity{
+    constructor(x,y){super(x,y,'player'); this.maxHp=100; this.hp=100; this.atk=10; this.speed=2.4; this.gold=0; this.inventory = []; this.size=0.6; this.color='#68e0a8'; }
+    takeDamage(v){ this.hp = clamp(this.hp - v, 0, this.maxHp); if(this.hp<=0){ onPlayerDeath(); } }
+  }
+
+  // enemy
+  class Enemy extends Entity{
+    constructor(x,y,level){super(x,y,'enemy'); this.level=level; this.maxHp=10+level*5; this.hp=this.maxHp; this.atk=3+Math.floor(level*1.5); this.speed=1+level*0.08; this.color='#e06b6b'; this.radius=5;}
+    update(dt){ // simple AI: move toward player
+      const p = state.player; const dx=p.x-this.x; const dy=p.y-this.y; const d=Math.hypot(dx,dy); if(d>0.1){ this.x += (dx/d)*this.speed*dt; this.y += (dy/d)*this.speed*dt; }
+      // attack if close
+      if(d < 0.7){ if(!this.lastAttack || Date.now()-this.lastAttack>800){ this.lastAttack=Date.now(); p.takeDamage(this.atk); log(`¡Enemigo atacó por ${this.atk}!`); } }
+    }
+  }
+
+  // items
+  class Item{ constructor(x,y,type){this.x=x;this.y=y;this.type=type; this.picked=false;}}
+
+  // iniciar nuevo juego
+  function startNew(){ state.level=1; state.score=0; state.seed = Date.now()%99999999; state.map = generateMap(state.width,state.height,state.seed); state.player = new Player(state.width/2,state.height/2); state.entities = []; state.items = []; spawnLevel(); updateUI(); log('Nuevo juego iniciado'); }
+
+  function spawnLevel(){ // create enemies based on level & difficulty
+    const n = 6 + state.level*2 + state.difficulty*2;
+    for(let i=0;i<n;i++){ const x=rand(2,state.width-3); const y=rand(2,state.height-3); if(state.map.tiles[y][x]===0){ state.entities.push(new Enemy(x+0.5,y+0.5,state.level)); }}
+    // spawn items
+    for(let i=0;i<6;i++){ const x=rand(2,state.width-3); const y=rand(2,state.height-3); if(state.map.tiles[y][x]===0){ state.items.push(new Item(x+0.5,y+0.5,['pocion','oro','espada'][rand(0,2)])); }}
+  }
+
+  function updateUI(){ hpLabel.textContent = `${Math.round(state.player.hp)} / ${state.player.maxHp}`; atkLabel.textContent = state.player.atk; spdLabel.textContent = state.player.speed.toFixed(2); goldLabel.textContent = state.player.gold; levelLabel.textContent = state.level; scoreLabel.textContent = state.score; updateInventoryUI(); }
+
+  function updateInventoryUI(){ const slots = inventoryEl.children; for(let i=0;i<SLOTS;i++){ const s = slots[i]; const it = state.player.inventory[i]; if(it){ s.textContent = it.type + (it.qty? ' x'+it.qty:''); } else { s.textContent='Vacío'; } }}
+
+  function useItem(idx){ const it = state.player.inventory[idx]; if(!it) return; if(it.type==='pocion'){ state.player.hp = clamp(state.player.hp + 40, 0, state.player.maxHp); log('Usaste una poción.'); state.player.inventory.splice(idx,1); } else if(it.type==='espada'){ state.player.atk += 6; log('Equipaste una espada. Ataque aumentado.'); state.player.inventory.splice(idx,1); } else if(it.type==='oro'){ state.player.gold += (it.qty||1); log('Recogiste oro desde el inventario.'); state.player.inventory.splice(idx,1); } updateUI(); }
+
+  function onPlayerDeath(){ log('Has muerto. Reiniciando nivel...'); // reduce level & respawn
+    state.score = Math.max(0, state.score - 50); state.player.hp = state.player.maxHp; state.player.gold = Math.floor(state.player.gold*0.5); state.entities = []; state.items = []; spawnLevel(); updateUI(); }
+
+  // collisions
+  function isWalkable(x,y){ const tx=Math.floor(x), ty=Math.floor(y); if(tx<0||ty<0||tx>=state.width||ty>=state.height) return false; return state.map.tiles[ty][tx]===0; }
+
+  // gameloop
+  let lastTime = performance.now(); let fpsCounter = {count:0,last:Date.now(),fps:0};
+  function loop(now){ const dt = Math.min(60,(now-lastTime))/16; lastTime = now; if(!state.paused){ update(dt); draw(); } requestAnimationFrame(loop); fpsCounter.count++; if(Date.now()-fpsCounter.last>500){ fpsCounter.fps = Math.round((fpsCounter.count*1000)/(Date.now()-fpsCounter.last)); fpsCounter.count=0; fpsCounter.last=Date.now(); fpsLabel.textContent = fpsCounter.fps; } }
+
+  function update(dt){ state.time += dt; // player control
+    const p = state.player; let vx=0, vy=0; if(keys['arrowup']||keys['w']) vy=-1; if(keys['arrowdown']||keys['s']) vy=1; if(keys['arrowleft']||keys['a']) vx=-1; if(keys['arrowright']||keys['d']) vx=1; const mag=Math.hypot(vx,vy); if(mag>0){ vx/=mag; vy/=mag; }
+    const nx = p.x + vx * p.speed * dt * 0.12; const ny = p.y + vy * p.speed * dt * 0.12;
+    if(isWalkable(nx,ny)){ p.x=nx; p.y=ny; }
+
+    // attack
+    if(keys[' ']){ // space
+      // simple melee: damage nearby enemies
+      for(let e of state.entities){ const d = Math.hypot(e.x-p.x,e.y-p.y); if(d<1.2){ e.hp -= p.atk; state.score += 5; log(`Atacaste a un enemigo por ${p.atk}`); if(e.hp<=0){ onEnemyKilled(e); } } }
+    }
+
+  ... (file continues; trimmed here for brevity in display)
+  
+  // update entities
+    for(let e of state.entities){ e.update(dt); }
+    state.entities = state.entities.filter(e=>e.hp>0);
+
+    // pick items
+    for(let i=state.items.length-1;i>=0;i--){ const it = state.items[i]; const d = Math.hypot(it.x-state.player.x,it.y-state.player.y); if(d<0.8){ pickupItem(it); state.items.splice(i,1);} }
+
+    // level complete?
+    if(state.entities.length===0){ // advance level
+      state.level++; state.seed = (state.seed+state.level*137)%99999999; state.map = generateMap(state.width,state.height,state.seed); spawnLevel(); log('Avanzaste al siguiente nivel!'); }
+
+    updateUI();
+  }
+
+  function onEnemyKilled(enemy){ state.score += 25; state.player.gold += rand(1,5); log('Enemigo derrotado'); // chance drop
+    if(rand(0,100) < 30){ state.items.push(new Item(enemy.x,enemy.y, ['pocion','oro','espada'][rand(0,2)])); }
+  }
+
+  function pickupItem(item){ log('Recogiste: '+item.type); // try to add to inventory
+    if(item.type==='oro'){ state.player.gold += rand(5,15); return; }
+    if(state.player.inventory.length < SLOTS){ state.player.inventory.push({type:item.type,qty:1}); } else { // drop
+      state.player.gold += 5; log('Inventario lleno. Convertido a oro.'); }
+  }
+
+  // draw
+  function draw(){ // clear
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    // camera
+    const tile = state.tileSize;
+    const viewW = Math.floor(canvas.width/tile); const viewH = Math.floor(canvas.height/tile);
+    let camX = Math.floor(state.player.x - viewW/2); let camY = Math.floor(state.player.y - viewH/2);
+    camX = clamp(camX,0,state.width-viewW); camY = clamp(camY,0,state.height-viewH);
+
+    // draw tiles
+    for(let y=0;y<viewH;y++){
+      for(let x=0;x<viewW;x++){
+        const tx = x+camX; const ty = y+camY; const t = state.map.tiles[ty] && state.map.tiles[ty][tx]; const px = x*tile; const py = y*tile;
+        if(t===1){ // wall
+          ctx.fillStyle = '#122233'; ctx.fillRect(px,py,tile,tile);
+          // wall shade
+          ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(px,py,tile,Math.floor(tile*0.6));
+        } else { // floor
+          ctx.fillStyle = '#061526'; ctx.fillRect(px,py,tile,tile);
+          // subtle texture
+          ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.fillRect(px,py,tile,1);
+        }
+      }
+    }
+
+    // draw items
+    for(let it of state.items){ const sx = Math.floor((it.x - camX)*tile); const sy=Math.floor((it.y-camY)*tile); ctx.fillStyle = it.type==='pocion'? '#8b5cf6' : (it.type==='oro'? '#fbbf24':'#94a3b8'); ctx.beginPath(); ctx.arc(sx+tile/2,sy+tile/2,6,0,Math.PI*2); ctx.fill(); ctx.closePath(); }
+
+    // draw entities
+    for(let e of state.entities){ e.draw(ctx, -camX*tile, -camY*tile, tile); }
+
+    // draw player
+    state.player.draw(ctx, -camX*tile, -camY*tile, tile);
+
+    // HUD overlay: health bar
+    const barW = 220; const barH = 10; const bx = 18, by = canvas.height - 28; ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(bx-2,by-2,barW+4,barH+4);
+    ctx.fillStyle='#2b3946'; ctx.fillRect(bx,by,barW,barH); ctx.fillStyle='#ff6b6b'; ctx.fillRect(bx,by,barW*(state.player.hp/state.player.maxHp),barH);
+
+    // minimap draw
+    drawMinimap(camX,camY,viewW,viewH);
+  }
+
+  function drawMinimap(camX,camY,viewW,viewH){ const mmW=minimapEl.width; const mmH=minimapEl.height; mmCtx.clearRect(0,0,mmW,mmH); const sx = mmW / state.width; const sy = mmH / state.height; for(let y=0;y<state.height;y++){ for(let x=0;x<state.width;x++){ const t = state.map.tiles[y][x]; mmCtx.fillStyle = t? '#0b2230':'#072f2a'; mmCtx.fillRect(x*sx,y*sy,sx,sy); } }
+    // entities
+    for(let e of state.entities){ mmCtx.fillStyle='#e06b6b'; mmCtx.fillRect(e.x*sx-1,e.y*sy-1,2,2); }
+    // player
+    mmCtx.fillStyle='#67e8f9'; mmCtx.fillRect(state.player.x*sx-1,state.player.y*sy-1,2,2);
+  }
+
+  // persistence
+  function saveGame(){ const data = {state:serializeState()}; localStorage.setItem('roguecraft_save',JSON.stringify(data)); log('Juego guardado en localStorage.'); }
+  function loadGame(){ const raw = localStorage.getItem('roguecraft_save'); if(!raw){ log('No hay partida guardada.'); return; } try{ const d = JSON.parse(raw); deserializeState(d.state); log('Partida cargada.'); } catch(e){ log('Error cargando: '+e.message); } }
+  function serializeState(){ const s = deepCopy(state); // remove functions & large objects
+    s.player.inventory = s.player.inventory || []; s.map = s.map; return s; }
+  function deserializeState(s){ state = s; // rehydrate some methods or defaults
+    if(!state.player.inventory) state.player.inventory = []; if(!state.entities) state.entities = []; if(!state.items) state.items = []; updateUI(); }
+
+  function exportJSON(){ const data = JSON.stringify(serializeState()); const blob = new Blob([data],{type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='roguecraft_save.json'; a.click(); URL.revokeObjectURL(url); }
+  function importJSON(){ const inp = document.createElement('input'); inp.type='file'; inp.accept='application/json'; inp.addEventListener('change',()=>{ const f=inp.files[0]; const reader=new FileReader(); reader.onload = ()=>{ try{ const obj = JSON.parse(reader.result); deserializeState(obj); log('Importado save'); } catch(e){ log('Formato inválido'); } }; reader.readAsText(f); }); inp.click(); }
+
+  // small seeded RNG helper for map generation tests
+  function seededRand(seed){ let x = Math.sin(seed++) * 10000; return x - Math.floor(x); }
+
+  // misc helpers
+  function toggleInventory(){ const style = inventoryEl.style.display; inventoryEl.style.display = (style==='none'?'grid':'grid'); }
+
+  // start automatically
+  startNew(); requestAnimationFrame(loop);
+
+  // extra: UI interactions for clicking on canvas — attack toward mouse
+  canvas.addEventListener('click',e=>{
+    const rect = canvas.getBoundingClientRect(); const mx = e.clientX-rect.left; const my = e.clientY-rect.top; const tile=state.tileSize; const viewW = Math.floor(canvas.width/tile); const viewH=Math.floor(canvas.height/tile);
+    let camX = Math.floor(state.player.x - viewW/2); let camY = Math.floor(state.player.y - viewH/2); camX = clamp(camX,0,state.width-viewW); camY = clamp(camY,0,state.height-viewH);
+    const tx = (mx/tile) + camX; const ty = (my/tile) + camY; // find nearest enemy
+    let nearest=null; let nd=9999; for(let en of state.entities){ const d= Math.hypot(en.x-tx,en.y-ty); if(d<nd){ nd=d; nearest=en; }} if(nearest && nd<8){ // move toward and attack
+      // small dash
+      const dx = nearest.x - state.player.x; const dy = nearest.y - state.player.y; const mag=Math.hypot(dx,dy); state.player.x += (dx/mag)*0.9; state.player.y += (dy/mag)*0.9; nearest.hp -= state.player.atk*1.2; log('Ataque dirigido (mouse)'); if(nearest.hp<=0){ onEnemyKilled(nearest); }
+    }
+  });
+
+  // small utility to ensure minimap canvas has proper resolution
+  function resizeMinimap(){ minimapEl.width = minimapEl.clientWidth * devicePixelRatio; minimapEl.height = minimapEl.clientHeight * devicePixelRatio; mmCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+  window.addEventListener('resize',resizeMinimap); resizeMinimap();
+
+  // seed-based stable RNG used earlier
+  // Placeholder for audio + more advanced features
+
+  </script>
+</body>
+</html>

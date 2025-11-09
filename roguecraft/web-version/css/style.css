@@ -1,0 +1,4 @@
+/* style.css - pared-down styles */
+:root{--bg:#0b1020;--panel:#0f1724;--accent:#67e8f9;--muted:#8892a6}
+html,body{height:100%;margin:0;background:var(--bg);color:#e6eef6;font-family:Inter,Arial}
+#app{padding:12px}
